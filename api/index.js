@@ -116,6 +116,35 @@ app.post('/api/reset', (req, res) => {
   res.json({ status: 'error', message: 'ไม่พบกลุ่มที่ระบุ' });
 });
 
+// 🌐 API Endpoint นำเข้าข้อมูลสลิปจากไฟล์ Excel
+app.post('/api/import', (req, res) => {
+  const { groupName, records } = req.body || {};
+  if (!records || !Array.isArray(records) || records.length === 0) {
+    return res.json({ status: 'error', message: 'ไม่พบข้อมูลสลิปในไฟล์ Excel' });
+  }
+
+  const targetGroup = groupName || 'กลุ่มนำเข้าจาก Excel';
+  if (!groupDatabase[targetGroup]) {
+    groupDatabase[targetGroup] = [];
+  }
+
+  records.forEach(r => {
+    groupDatabase[targetGroup].push({
+      orderNo: groupDatabase[targetGroup].length + 1,
+      senderName: r.senderName || r['ชื่อผู้โอนเงิน'] || r['ชื่อผู้โอน'] || r['ผู้โอน'] || 'ไม่ระบุ',
+      receiverName: r.receiverName || r['ผู้รับเงิน / บัญชีปลายทาง'] || r['ผู้รับเงิน'] || 'ไม่ระบุ',
+      amount: r.amount || r['จำนวนเงิน (บาท)'] || r['จำนวนเงิน'] || '0.00',
+      slipDateTime: r.slipDateTime || r['วันเวลาที่โอน'] || r['วันเวลาโอน'] || new Date().toLocaleString('th-TH'),
+      timestamp: new Date().toLocaleString('th-TH')
+    });
+  });
+
+  res.json({
+    status: 'success',
+    message: `ทำการนำเข้าข้อมูลสลิปจาก Excel จำนวน ${records.length} รายการ เข้ากลุ่ม "${targetGroup}" เรียบร้อยแล้ว!`
+  });
+});
+
 // 🌐 หน้าเว็บ Dashboard พรีเมียม (เลือกหลายกลุ่มได้ + ปุ่มกดรีเซ็ตบนเว็บ)
 app.get('/', (req, res) => {
   const html = `<!DOCTYPE html>
@@ -127,6 +156,7 @@ app.get('/', (req, res) => {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --bg-dark: #0F172A;
@@ -217,6 +247,22 @@ app.get('/', (req, res) => {
     }
     .btn-reset:hover { background: var(--danger); color: #FFFFFF; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); }
 
+    .btn-excel {
+      background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4);
+      color: var(--success); padding: 0.5rem 1rem; border-radius: 10px;
+      font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.2s;
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .btn-excel:hover { background: var(--success); color: #FFFFFF; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); }
+
+    .btn-upload-excel {
+      background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4);
+      color: var(--primary); padding: 0.5rem 1rem; border-radius: 10px;
+      font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.2s;
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .btn-upload-excel:hover { background: var(--primary); color: #FFFFFF; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
+
     /* Table Container */
     .table-card {
       background: var(--card-bg); border: 1px solid var(--card-border);
@@ -243,6 +289,9 @@ app.get('/', (req, res) => {
         </div>
       </div>
       <div class="header-actions">
+        <button class="btn-excel" onclick="exportToExcel()" title="ดาวน์โหลดสรุปยอดสลิปเป็นไฟล์ Excel">📊 ส่งออก Excel (.xlsx)</button>
+        <button class="btn-upload-excel" onclick="document.getElementById('excel-file-input').click()" title="นำเข้าข้อมูลสลิปจากไฟล์ Excel">📤 อัปโหลด Excel (.xlsx)</button>
+        <input type="file" id="excel-file-input" accept=".xlsx, .xls, .csv" style="display:none;" onchange="handleExcelUpload(event)">
         <button class="btn-reset" onclick="confirmReset('ALL')">⚠️ รีเซ็ตทุกกลุ่มรวมกัน</button>
         <div class="live-status">
           <div class="dot"></div>
