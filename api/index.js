@@ -606,7 +606,7 @@ async function handleTextMessage(event, reqHost) {
   } else if (userText.includes('เช็ค') || userText.includes('ping') || userText.includes('ทดสอบ') || userText.includes('status')) {
     const flexMessage = buildStatusFlexMessage(currentRecords.length);
     await replyLineFlexMessage(replyToken, flexMessage);
-  } else if (userText.includes('สรุป') || userText.includes('รายชื่อ') || userText.includes('excel') || userText.includes('ไฟล์') || userText.includes('รายงาน')) {
+  } else if (userText.includes('สรุป') || userText.includes('รายชื่อ')) {
     const flexMessage = buildSummaryFlexMessage(currentRecords, contextId, reqHost);
     await replyLineFlexMessage(replyToken, flexMessage);
   }
@@ -780,26 +780,13 @@ function buildSlipSuccessFlexCard(item, allRecords, contextId, reqHost) {
         layout: "vertical",
         backgroundColor: "#F7FAFC",
         paddingAll: "md",
-        spacing: "sm",
         contents: [
-          {
-            type: "button",
-            style: "primary",
-            color: "#10B981",
-            height: "sm",
-            action: {
-              type: "uri",
-              label: "📊 ดาวน์โหลดไฟล์ Excel (.xlsx)",
-              uri: downloadUrl
-            }
-          },
           {
             type: "text",
             text: "พิมพ์ 'รีเซ็ต' เมื่อต้องการล้างลำดับเฉพาะกลุ่มนี้เริ่มนับ 1 ใหม่",
             size: "xxs",
             color: "#A0AEC0",
-            align: "center",
-            margin: "xs"
+            align: "center"
           }
         ]
       }
