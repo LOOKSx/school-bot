@@ -860,26 +860,31 @@ async function extractSlipDataWithGemini(imageBuffer) {
   if (!GEMINI_API_KEY) return null;
 
   const base64Image = imageBuffer.toString('base64');
+  let mimeType = 'image/jpeg';
+  if (base64Image.startsWith('iVBORw0KGgo')) {
+    mimeType = 'image/png';
+  }
+
   const prompt = `ช่วยอ่านรูปภาพสลิปโอนเงิน/เติมเงิน/จ่ายบิลนี้ ตอบกลับเป็น JSON ดังนี้เท่านั้น:
 {
   "is_slip": true,
   "sender_name": "ชื่อผู้โอน หรือ ผู้ทำรายการ (เช่น นาย พุฒิพงศ์ ร...)",
-  "receiver_name": "ชื่อผู้รับเงิน หรือ บัญชีปลายทาง หรือ ร้านค้า (เช่น นายวิโรจน์ จิตต์ตรง)",
-  "amount": "จำนวนเงินตัวเลข เช่น 60.00",
-  "transfer_date_time": "วัน เดือน ปี และเวลาที่โอนเงิน เช่น 18 ก.ค. 2569 - 12:27"
+  "receiver_name": "ชื่อผู้รับเงิน หรือ บัญชีปลายทาง หรือ ร้านค้า (เช่น นาย พรกริศน์ เดชะอัครมงคล)",
+  "amount": "จำนวนเงินตัวเลข เช่น 70.00",
+  "transfer_date_time": "วัน เดือน ปี และเวลาที่โอนเงิน เช่น 22 ก.ค. 2569 - 21:23"
 }`;
 
   const payload = {
     contents: [{
       parts: [
         { text: prompt },
-        { inline_data: { mime_type: 'image/png', data: base64Image } }
+        { inline_data: { mime_type: mimeType, data: base64Image } }
       ]
     }],
     generationConfig: { response_mime_type: 'application/json' }
   };
 
-  const models = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-pro-latest'];
+  const models = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-2.0-flash', 'gemini-pro-latest'];
 
   for (const model of models) {
     try {
@@ -887,9 +892,12 @@ async function extractSlipDataWithGemini(imageBuffer) {
       const response = await axiosClient.post(url, payload, {
         headers: { 'Content-Type': 'application/json' }
       });
-      let resText = response.data.candidates[0].content.parts[0].text;
-      resText = resText.replace(/```json/gi, '').replace(/```/g, '').trim();
-      return JSON.parse(resText);
+      if (response.data && response.data.candidates && response.data.candidates[0]) {
+        let resText = response.data.candidates[0].content.parts[0].text;
+        resText = resText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(resText);
+        if (parsed) return parsed;
+      }
     } catch (e) {
       console.error(`Error with model ${model}:`, e.message);
     }
