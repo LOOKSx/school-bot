@@ -17,11 +17,44 @@ const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || (KEY_PART1 + KEY_PAR
 
 // 🗄️ ฐานข้อมูลสลิปสะสมแยกตามกลุ่ม LINE
 let groupDatabase = global.groupDatabase || {};
-global.groupDatabase = groupDatabase;
+let groupNameCache = global.groupNameCache || {};
+global.groupNameCache = groupNameCache;
 
-function getContextId(event) {
+async function getContextId(event) {
   if (!event || !event.source) return 'กลุ่มทั่วไป (General)';
-  if (event.source.groupId) return `กลุ่ม LINE (${event.source.groupId.substring(0, 8)}...)`;
+
+  if (event.source.groupId) {
+    const groupId = event.source.groupId;
+    if (groupNameCache[groupId]) {
+      return groupNameCache[groupId];
+    }
+
+    try {
+      const url = `https://api.line.me/v2/bot/group/${groupId}/summary`;
+      const response = await axiosClient.get(url, {
+        headers: { 'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` }
+      });
+
+      if (response.data && response.data.groupName && response.data.groupName.trim() !== '') {
+        const realGroupName = response.data.groupName.trim();
+        groupNameCache[groupId] = realGroupName;
+
+        const oldFallbackKey = `กลุ่ม LINE (${groupId.substring(0, 8)}...)`;
+        if (groupDatabase[oldFallbackKey]) {
+          const existingNew = groupDatabase[realGroupName] || [];
+          groupDatabase[realGroupName] = [...existingNew, ...groupDatabase[oldFallbackKey]];
+          delete groupDatabase[oldFallbackKey];
+        }
+
+        return realGroupName;
+      }
+    } catch (err) {
+      console.log('LINE group summary fetch info:', err.message);
+    }
+
+    return `กลุ่ม LINE (${groupId.substring(0, 8)}...)`;
+  }
+
   if (event.source.roomId) return `ห้องแชท (${event.source.roomId.substring(0, 8)}...)`;
   if (event.source.userId) return `ส่วนตัว (${event.source.userId.substring(0, 8)}...)`;
   return 'กลุ่มทั่วไป (General)';
@@ -457,7 +490,7 @@ async function handleTextMessage(event) {
 
   const userText = event.message.text.trim().toLowerCase();
   const replyToken = event.replyToken;
-  const contextId = getContextId(event);
+  const contextId = await getContextId(event);
   const currentRecords = getGroupRecords(contextId);
 
   if (userText.includes('รีเซ็ต') || userText.includes('reset') || userText.includes('ล้าง')) {
@@ -482,7 +515,7 @@ async function handleImageMessage(event) {
   const messageId = event.message.id;
   const userId = event.source ? event.source.userId : null;
   const groupId = event.source ? event.source.groupId : null;
-  const contextId = getContextId(event);
+  const contextId = await getContextId(event);
   const timestampNow = new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" });
 
   const [lineUserName, imageBuffer] = await Promise.all([
