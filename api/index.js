@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const http = require('http');
 const https = require('https');
+const XLSX = require('xlsx');
 
 const app = express();
 app.use(express.json());
@@ -143,6 +144,59 @@ app.post('/api/import', (req, res) => {
     status: 'success',
     message: `ทำการนำเข้าข้อมูลสลิปจาก Excel จำนวน ${records.length} รายการ เข้ากลุ่ม "${targetGroup}" เรียบร้อยแล้ว!`
   });
+});
+
+// 🌐 API Endpoint ให้ดาวน์โหลดไฟล์ Excel (.xlsx) แยกกลุ่มสำหรับแชท LINE & Web Dashboard
+app.get('/api/export-excel', (req, res) => {
+  const group = req.query.group || 'ALL';
+  let exportRows = [];
+
+  const groupsToExport = (group === 'ALL') ? Object.keys(groupDatabase) : [group];
+
+  groupsToExport.forEach(gName => {
+    const list = groupDatabase[gName] || [];
+    list.forEach(item => {
+      exportRows.push({
+        'ลำดับ': item.orderNo,
+        'กลุ่ม LINE': gName,
+        'ชื่อผู้โอนเงิน': item.senderName || 'ไม่ระบุ',
+        'ผู้รับเงิน / บัญชีปลายทาง': item.receiverName || 'ไม่ระบุ',
+        'จำนวนเงิน (บาท)': item.amount || '0.00',
+        'วันเวลาที่โอน': item.slipDateTime || item.timestamp || '-'
+      });
+    });
+  });
+
+  if (exportRows.length === 0) {
+    exportRows.push({
+      'ลำดับ': 1,
+      'กลุ่ม LINE': group,
+      'ชื่อผู้โอนเงิน': 'ยังไม่มีรายการโอนเงินในกลุ่มนี้',
+      'ผู้รับเงิน / บัญชีปลายทาง': '-',
+      'จำนวนเงิน (บาท)': '0.00',
+      'วันเวลาที่โอน': '-'
+    });
+  }
+
+  const ws = XLSX.utils.json_to_sheet(exportRows);
+  ws['!cols'] = [
+    { wch: 8 },  // ลำดับ
+    { wch: 25 }, // กลุ่ม LINE
+    { wch: 25 }, // ชื่อผู้โอนเงิน
+    { wch: 25 }, // ผู้รับเงิน
+    { wch: 15 }, // จำนวนเงิน
+    { wch: 25 }  // วันเวลาโอน
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'รายการสลิปโอนเงิน');
+
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  const safeFileName = encodeURIComponent(`รายงานสลิปโอนเงิน_${group.substring(0, 15)}.xlsx`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"; filename*=UTF-8''${safeFileName}`);
+  res.send(buffer);
 });
 
 // 🌐 หน้าเว็บ Dashboard พรีเมียม (เลือกหลายกลุ่มได้ + ปุ่มกดรีเซ็ตบนเว็บ)
@@ -516,13 +570,14 @@ app.get('/', (req, res) => {
 app.post('/api/webhook', async (req, res) => {
   try {
     const events = req.body.events;
+    const reqHost = req.headers.host;
     if (events && events.length > 0) {
       for (const event of events) {
         if (event.type === 'message') {
           if (event.message.type === 'image') {
-            await handleImageMessage(event);
+            await handleImageMessage(event, reqHost);
           } else if (event.message.type === 'text') {
-            await handleTextMessage(event);
+            await handleTextMessage(event, reqHost);
           }
         }
       }
@@ -534,7 +589,7 @@ app.post('/api/webhook', async (req, res) => {
   res.status(200).send('OK');
 });
 
-async function handleTextMessage(event) {
+async function handleTextMessage(event, reqHost) {
   if (!event || !event.replyToken || !event.message || !event.message.text) return;
 
   const userText = event.message.text.trim().toLowerCase();
@@ -551,13 +606,13 @@ async function handleTextMessage(event) {
   } else if (userText.includes('เช็ค') || userText.includes('ping') || userText.includes('ทดสอบ') || userText.includes('status')) {
     const flexMessage = buildStatusFlexMessage(currentRecords.length);
     await replyLineFlexMessage(replyToken, flexMessage);
-  } else if (userText.includes('สรุป') || userText.includes('รายชื่อ')) {
-    const flexMessage = buildSummaryFlexMessage(currentRecords);
+  } else if (userText.includes('สรุป') || userText.includes('รายชื่อ') || userText.includes('excel') || userText.includes('ไฟล์') || userText.includes('รายงาน')) {
+    const flexMessage = buildSummaryFlexMessage(currentRecords, contextId, reqHost);
     await replyLineFlexMessage(replyToken, flexMessage);
   }
 }
 
-async function handleImageMessage(event) {
+async function handleImageMessage(event, reqHost) {
   if (!event || !event.replyToken) return;
 
   const replyToken = event.replyToken;
@@ -608,12 +663,12 @@ async function handleImageMessage(event) {
   };
   currentRecords.push(recordItem);
 
-  const flexCard = buildSlipSuccessFlexCard(recordItem, currentRecords);
+  const flexCard = buildSlipSuccessFlexCard(recordItem, currentRecords, contextId, reqHost);
 
   await replyLineFlexMessage(replyToken, flexCard);
 }
 
-function buildSlipSuccessFlexCard(item, allRecords) {
+function buildSlipSuccessFlexCard(item, allRecords, contextId, reqHost) {
   let summaryRows = allRecords.map(r => {
     return {
       type: "box",
@@ -630,6 +685,9 @@ function buildSlipSuccessFlexCard(item, allRecords) {
   if (summaryRows.length > 10) {
     summaryRows = summaryRows.slice(-10);
   }
+
+  const host = reqHost || 'school-bot-ten.vercel.app';
+  const downloadUrl = `https://${host}/api/export-excel?group=${encodeURIComponent(contextId || 'ALL')}`;
 
   return {
     type: "flex",
@@ -652,7 +710,7 @@ function buildSlipSuccessFlexCard(item, allRecords) {
           },
           {
             type: "text",
-            text: `ลำดับรายการที่ #${item.orderNo}`,
+            text: `ลำดับรายการที่ #${item.orderNo} (${contextId || 'กลุ่มทั่วไป'})`,
             color: "#E2E8F0",
             size: "xs",
             margin: "xs"
@@ -722,13 +780,26 @@ function buildSlipSuccessFlexCard(item, allRecords) {
         layout: "vertical",
         backgroundColor: "#F7FAFC",
         paddingAll: "md",
+        spacing: "sm",
         contents: [
+          {
+            type: "button",
+            style: "primary",
+            color: "#10B981",
+            height: "sm",
+            action: {
+              type: "uri",
+              label: "📊 ดาวน์โหลดไฟล์ Excel (.xlsx)",
+              uri: downloadUrl
+            }
+          },
           {
             type: "text",
             text: "พิมพ์ 'รีเซ็ต' เมื่อต้องการล้างลำดับเฉพาะกลุ่มนี้เริ่มนับ 1 ใหม่",
             size: "xxs",
             color: "#A0AEC0",
-            align: "center"
+            align: "center",
+            margin: "xs"
           }
         ]
       }
@@ -762,10 +833,12 @@ function buildStatusFlexMessage(totalCount) {
   };
 }
 
-function buildSummaryFlexMessage(allRecords) {
+function buildSummaryFlexMessage(allRecords, contextId, reqHost) {
   const flexCard = buildSlipSuccessFlexCard(
     allRecords.length > 0 ? allRecords[allRecords.length - 1] : { orderNo: 0, senderName: "-", receiverName: "-", amount: "0", slipDateTime: "-" },
-    allRecords
+    allRecords,
+    contextId,
+    reqHost
   );
   return flexCard;
 }
